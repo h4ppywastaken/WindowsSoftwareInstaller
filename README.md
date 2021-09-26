@@ -1,5 +1,7 @@
 # WindowsSoftwareInstaller
-Powershell script to install a list of software on the local computer automatically
+Powershell script to install a list of software on the local computer automatically.
+
+Tested on Windows 10 Pro N 21H1
 
 ## Software Installer
 Powershell Script to install a list of software on the local computer configurable through a configuration file.
