@@ -24,6 +24,12 @@
 .PARAMETER pretend
     Pretend Mode
 
+.PARAMETER autoContinue
+    Automatically confirm download and installation of all items
+
+.PARAMETER noPromptOnError
+    Ignore errors and continue
+
 .EXAMPLE
     .\WSI.ps1
 #>
@@ -32,7 +38,9 @@ param
 (
     [string] $inputFile = ".\WSISW.config",
     [string] $folder = $(Split-Path -Parent -Path $MyInvocation.MyCommand.Path) + "\Installers",
-    [switch] $pretend
+    [switch] $pretend,
+    [switch] $autoContinue,
+    [switch] $noPromptOnError
 )
 
 # Self-elevate the script if required
@@ -102,178 +110,209 @@ Write-Host "####################################################################
 
 foreach($file in $files)
 {
-    if($file[0] -eq "#" -or $file -eq "")
+    $repeat = $true
+    while($repeat)
     {
-        Continue
-    }
-    Write-Host ""
-    Write-Host "###############################################################################################################"
-    if(-not $pretend)
-    {
-        $skip = ''
-        Write-Host "Next Item: $($file)`r`nPress ENTER to continue, CTRL+C to quit or type 's' to skip this item: " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
-        $skip = Read-Host
-        if($skip -eq 's')
+        try
         {
-            Continue
-        }
-    }
-    $file = $file.Split(';')
-    # Get forwarded url from download link
-    
-    $url = $file[1]
-    $origurl = $url
-
-    if($url.Contains('$manual:'))
-    {
-        Write-Host "Opening $($file[0]) for manual downloads..." -ForegroundColor Yellow -BackgroundColor Black
-        Start-Process "firefox" $url.Replace('$Manual:','')
-        Continue
-    }
-
-    if($url.Contains('$choco:'))
-    {
-        Write-Host "Installing $($file[0]) from chocolatey..." -ForegroundColor Yellow -BackgroundColor Black
-        if(-not $pretend)
-        {
-            $skip = ''
-            Write-Host "Press ENTER to continue, CTRL+C to quit or type 's' to skip installing $($file[0]): " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
-            $skip = Read-Host
-            if($skip -eq 's')
+            if($file[0] -eq "#" -or $file -eq "")
             {
                 Continue
             }
-            $chococmdstring = "chocolatey install " +  $url.Replace('$choco:','') + " --acceptlicense -y -r $($file[2])"
-            Invoke-Expression -Command $chococmdstring
-        }
-        Continue
-    }
-    
-    Write-Host "Getting filename for $($file[0])..." -ForegroundColor Yellow -BackgroundColor Black
+            Write-Host ""
+            Write-Host "###############################################################################################################"
+            if(-not $pretend -and -not $autoContinue)
+            {
+                $skip = ''
+                Write-Host "Next Item: $($file)`r`nPress ENTER to continue, CTRL+C to quit or type 's' to skip this item: " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
+                $skip = Read-Host
+                if($skip -eq 's')
+                {
+                    Continue
+                }
+            }
+            $file = $file.Split(';')
+            # Get forwarded url from download link
+            
+            $url = $file[1]
+            $origurl = $url
 
-    if($url.Contains("sourceforge"))
-    {
-        $url = Invoke-WebRequest -Method Get -Uri $url -UseBasicParsing
-        $url = ($url.Content | Select-String -Pattern '<meta http-equiv="refresh".*(https:\/\/.*);').matches.groups[1].Value
-    }   
+            if($url.Contains('$manual:'))
+            {
+                Write-Host "Opening $($file[0]) for manual downloads..." -ForegroundColor Yellow -BackgroundColor Black
+                Start-Process "firefox" $url.Replace('$Manual:','')
+                Continue
+            }
 
-    if($url.Contains('$version'))
-    {
-        $url = $url.Substring(0, $url.IndexOf('$version'))
-        $url = $url.Substring(0, $url.LastIndexOf('/'))
-    }
+            if($url.Contains('$choco:'))
+            {
+                Write-Host "Installing $($file[0]) from chocolatey..." -ForegroundColor Yellow -BackgroundColor Black
+                if(-not $pretend)
+                {
+                    if(-not $autoContinue)
+                    {
+                        $skip = ''
+                        Write-Host "Press ENTER to continue, CTRL+C to quit or type 's' to skip installing $($file[0]): " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
+                        $skip = Read-Host
+                        if($skip -eq 's')
+                        {
+                            Continue
+                        }
+                    }
+                    $chococmdstring = "chocolatey install " +  $url.Replace('$choco:','') + " --acceptlicense -y -r $($file[2])"
+                    Invoke-Expression -Command $chococmdstring
+                }
+                Continue
+            }
+            
+            Write-Host "Getting filename for $($file[0])..." -ForegroundColor Yellow -BackgroundColor Black
 
-    $tmphead = Invoke-WebRequest -Method Head -Uri $url -UseBasicParsing
-    $url = $tmphead.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
-    if(-not $url)
-    {
-        $url = $tmphead.BaseResponse.ResponseUri.AbsoluteUri
-    }
+            if($url.Contains("sourceforge"))
+            {
+                $url = Invoke-WebRequest -Method Get -Uri $url -UseBasicParsing
+                $url = ($url.Content | Select-String -Pattern '<meta http-equiv="refresh".*(https:\/\/.*);').matches.groups[1].Value
+            }   
 
-    if($url.Contains("github"))
-    {
-        $browser_download_urls = ((Invoke-WebRequest $origurl -UseBasicParsing) | ConvertFrom-Json).assets | ForEach-Object {$_.browser_download_url}
-        $url = $browser_download_urls | Where-Object {$_ -match 'x64.*.exe$'} | Select-Object -Last 1
-        if(-not $url)
-        {
-            $url = $browser_download_urls | Where-Object {$_ -match 'x86_64.*.exe$'} | Select-Object -Last 1
-        }
-        if(-not $url)
-        {
-            $url = $browser_download_urls | Where-Object {$_ -match '.exe$'} | Select-Object -Last 1
-        }
-    }
+            if($url.Contains('$version'))
+            {
+                $url = $url.Substring(0, $url.IndexOf('$version'))
+                $url = $url.Substring(0, $url.LastIndexOf('/'))
+            }
 
-    if($origurl.Contains('$version'))
-    {
-        $content = (Invoke-WebRequest $url -UseBasicParsing).Content
-        $fullversionlist = ($content | Select-String -Pattern '<a href=".*?((\d+\.)+\d+)([a-z])*.*">.*<\/a>' -AllMatches).Matches
-        
-        #get main version
-        $version = $fullversionlist | ForEach-Object {$_.Groups[1].Value} |
-                Where-Object { $_ -as [version] } |
-                Sort-Object { [version] $_ } | Select-Object -Last 1
+            $tmphead = Invoke-WebRequest -Method Head -Uri $url -UseBasicParsing
+            $url = $tmphead.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+            if(-not $url)
+            {
+                $url = $tmphead.BaseResponse.ResponseUri.AbsoluteUri
+            }
 
-        #add subversion a,b,c,d...
-        if($fullversionlist[0].Groups[$fullversionlist[0].Groups.Count-1] -match "[a-z]")
-        {
-            $version = $fullversionlist | Foreach-Object {$($_.Groups[1].Value + $_.Groups[3].Value)} |
-                    Where-Object {$_ -match "$($version)[a-z]{0,1}" } |
-                    Sort-Object | Select-Object -Last 1
-        }
+            if($url.Contains("github"))
+            {
+                $browser_download_urls = ((Invoke-WebRequest $origurl -UseBasicParsing) | ConvertFrom-Json).assets | ForEach-Object {$_.browser_download_url}
+                $url = $browser_download_urls | Where-Object {$_ -match 'x64.*.exe$'} | Select-Object -Last 1
+                if(-not $url)
+                {
+                    $url = $browser_download_urls | Where-Object {$_ -match 'x86_64.*.exe$'} | Select-Object -Last 1
+                }
+                if(-not $url)
+                {
+                    $url = $browser_download_urls | Where-Object {$_ -match '.exe$'} | Select-Object -Last 1
+                }
+            }
 
-        $url = $origurl.Replace('$version', $version)
-    }
-    
-    #Extract filename from URL
-    $filename = [uri]::UnescapeDataString([System.IO.Path]::GetFileName($url))
-    if($filename.IndexOf("?") -ne -1)
-    {
-        $filename = $filename.Substring(0, $filename.IndexOf("?"))
-    }
+            if($origurl.Contains('$version'))
+            {
+                $content = (Invoke-WebRequest $url -UseBasicParsing).Content
+                $fullversionlist = ($content | Select-String -Pattern '<a href=".*?((\d+\.)+\d+)([a-z])*.*">.*<\/a>' -AllMatches).Matches
+                
+                #get main version
+                $version = $fullversionlist | ForEach-Object {$_.Groups[1].Value} |
+                        Where-Object { $_ -as [version] } |
+                        Sort-Object { [version] $_ } | Select-Object -Last 1
 
-    if(-not $filename.EndsWith(".exe") -and -not $filename.EndsWith(".zip") -and -not $filename.EndsWith(".msi") -and -not $filename.EndsWith(".ts3_plugin"))
-    {
-        $filename += ".exe"
-    }
-    
-    Write-Host "Filename: $($filename)" -ForegroundColor Yellow -BackgroundColor Black
+                #add subversion a,b,c,d...
+                if($fullversionlist[0].Groups[$fullversionlist[0].Groups.Count-1] -match "[a-z]")
+                {
+                    $version = $fullversionlist | Foreach-Object {$($_.Groups[1].Value + $_.Groups[3].Value)} |
+                            Where-Object {$_ -match "$($version)[a-z]{0,1}" } |
+                            Sort-Object | Select-Object -Last 1
+                }
 
-    $path = [IO.Path]::Combine($folder,$filename)
+                $url = $origurl.Replace('$version', $version)
+            }
+            
+            #Extract filename from URL
+            $filename = [uri]::UnescapeDataString([System.IO.Path]::GetFileName($url))
+            if($filename.IndexOf("?") -ne -1)
+            {
+                $filename = $filename.Substring(0, $filename.IndexOf("?"))
+            }
 
-    if(Test-Path($path))
-    {
-        Write-Host "File already downloaded - Skipping download!" -ForegroundColor Yellow -BackgroundColor Black
-    }
-    else
-    {
-        Write-Host "Downloading $($file[0]) from $url..." -ForegroundColor Yellow -BackgroundColor Black
+            if(-not $filename.EndsWith(".exe") -and -not $filename.EndsWith(".zip") -and -not $filename.EndsWith(".msi") -and -not $filename.EndsWith(".ts3_plugin"))
+            {
+                $filename += ".exe"
+            }
+            
+            Write-Host "Filename: $($filename)" -ForegroundColor Yellow -BackgroundColor Black
 
-        if([System.IO.File]::Exists($path) -eq $False )
-        {
+            $path = [IO.Path]::Combine($folder,$filename)
+
+            if(Test-Path($path))
+            {
+                Write-Host "File already downloaded - Skipping download!" -ForegroundColor Yellow -BackgroundColor Black
+            }
+            else
+            {
+                Write-Host "Downloading $($file[0]) from $url..." -ForegroundColor Yellow -BackgroundColor Black
+
+                if([System.IO.File]::Exists($path) -eq $False )
+                {
+                    if(-not $pretend)
+                    {
+                        try
+                        {
+                            $wc = New-Object System.Net.WebClient
+                            $wc.DownloadFile($url, $path)
+                        }
+                        catch
+                        {
+                            Invoke-WebRequest $url -Outfile $path -UseBasicParsing
+                        }
+                        
+                    }
+                }
+            }
+
+            Write-Host "Installing $($file[0])..." -ForegroundColor Yellow -BackgroundColor Black
             if(-not $pretend)
             {
-                try
+                if($filename.EndsWith(".zip"))
                 {
-                    $wc = New-Object System.Net.WebClient
-                    $wc.DownloadFile($url, $path)
+                    Write-Host "Extracting .zip archive..." -ForegroundColor Yellow -BackgroundColor Black
+                    $folderpath = $path.Replace(".zip","")
+                    Expand-Archive -LiteralPath $path -DestinationPath $folderpath
+                    $path = (Get-ChildItem -Path $folderpath -Recurse | Where-Object {$_.Name -match "^.*.exe$"}).FullName | Select-Object -First 1
                 }
-                catch
+
+                if(-not $autoContinue)
                 {
-                    Invoke-WebRequest $url -Outfile $path -UseBasicParsing
+                    $skip = ''
+                    Write-Host "Press ENTER to continue, CTRL+C to quit or type 's' to skip installing $($file[0]): " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
+                    $skip = Read-Host
+                    if($skip -eq 's')
+                    {
+                        Continue
+                    }
+                }
+                Write-Host "Executing $($path)..." -ForegroundColor Yellow -BackgroundColor Black
+                if(-not $file[2])
+                {
+                    Start-Process $path -Wait
+                }
+                else
+                {
+                    Start-Process $path -ArgumentList $file[2] -Wait
                 }
                 
             }
-        }
-    }
 
-    Write-Host "Installing $($file[0])..." -ForegroundColor Yellow -BackgroundColor Black
-    if(-not $pretend)
-    {
-        if($filename.EndsWith(".zip"))
-        {
-            Write-Host "Extracting .zip archive..." -ForegroundColor Yellow -BackgroundColor Black
-            $folderpath = $path.Replace(".zip","")
-            Expand-Archive -LiteralPath $path -DestinationPath $folderpath
-            $path = (Get-ChildItem -Path $folderpath -Recurse | Where-Object {$_.Name -match "^.*.exe$"}).FullName | Select-Object -First 1
+            $repeat = $false
         }
-        $skip = ''
-        Write-Host "Press ENTER to continue, CTRL+C to quit or type 's' to skip installing $($file[0]): " -NoNewline -ForegroundColor Yellow -BackgroundColor Black
-        $skip = Read-Host
-        if($skip -eq 's')
+        catch
         {
-            Continue
+            if(!($noPromptOnError))
+            {
+                Write-Error "There was an unexpected Error. Do you want to retry? (y/N)" -NoNewline
+                if((Read-Host).ToLower() -eq "n")
+                {
+                    $repeat = $false
+                }
+            }
+            else
+            {
+                $repeat = $false
+            }
         }
-        Write-Host "Executing $($path)..." -ForegroundColor Yellow -BackgroundColor Black
-        if(-not $file[2])
-        {
-            Start-Process $path -Wait
-        }
-        else
-        {
-            Start-Process $path -ArgumentList $file[2] -Wait
-        }
-        
     }
 }
 
